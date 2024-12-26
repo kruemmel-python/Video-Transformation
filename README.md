@@ -21,7 +21,7 @@ Dieses Projekt bietet ein neuronales Netzwerk, das Videos transformiert, indem e
 ## Installation
 1. Klone das Repository:
    ```bash
-   git clone [https://github.com/username/video-transformer.git](https://github.com/kruemmel-python/Video-Transformation.git)
+   git clone [https://github.com/kruemmel-python/Video-Transformation.git)
    cd video-transformer
    ```
 
