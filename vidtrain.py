@@ -6,6 +6,7 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 import os
+from skimage.metrics import structural_similarity as ssim
 
 # -----------------------------
 # Dataset-Klasse
@@ -71,7 +72,6 @@ def generate_training_data(video_path, transform_function, output_path):
     # Speichere die Daten
     np.savez(output_path, inputs=np.array(input_frames), targets=np.array(target_frames))
 
-
 def load_training_data(data_path):
     data = np.load(data_path)
     inputs = torch.tensor(data['inputs'], dtype=torch.float32).permute(0, 3, 1, 2)  # [Batch, Channels, Height, Width]
@@ -81,10 +81,28 @@ def load_training_data(data_path):
 # -----------------------------
 # Trainingsprozess
 # -----------------------------
-def train_model(model, dataloader, criterion, optimizer, device, save_path, epochs=20):
+def calculate_accuracy(output, target):
+    """
+    Berechnet die Genauigkeit basierend auf einer einfachen SSIM-Metrik.
+    Höhere Werte deuten auf eine größere Ähnlichkeit hin.
+    """
+    output_np = output.detach().permute(0, 2, 3, 1).cpu().numpy()  # [Batch, H, W, C]
+    target_np = target.detach().permute(0, 2, 3, 1).cpu().numpy()
+
+    batch_size = output_np.shape[0]
+    accuracy = 0
+    for i in range(batch_size):
+        # Setze die Fenstergröße explizit auf 3 und füge den Parameter `data_range` hinzu
+        accuracy += ssim(output_np[i], target_np[i], win_size=3, multichannel=True, channel_axis=-1, data_range=1.0)
+    return accuracy / batch_size
+
+
+
+def train_model(model, dataloader, criterion, optimizer, device, save_path, epochs=10):
     model.train()
     for epoch in range(epochs):
         epoch_loss = 0
+        epoch_accuracy = 0
         for input_batch, target_batch in tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs}"):
             input_batch, target_batch = input_batch.to(device), target_batch.to(device)
 
@@ -94,9 +112,15 @@ def train_model(model, dataloader, criterion, optimizer, device, save_path, epoc
             loss.backward()
             optimizer.step()
 
+            # Berechnung von Verlust und Genauigkeit
             epoch_loss += loss.item()
+            epoch_accuracy += calculate_accuracy(outputs, target_batch)
 
-        print(f"Epoch {epoch+1}: Loss = {epoch_loss / len(dataloader)}")
+        # Durchschnittswerte der Epoche berechnen
+        avg_loss = epoch_loss / len(dataloader)
+        avg_accuracy = epoch_accuracy / len(dataloader)
+
+        print(f"Epoch {epoch+1}: Loss = {avg_loss:.4f}, Accuracy = {avg_accuracy:.4f}")
 
     torch.save(model.state_dict(), save_path)
     print(f"Modell gespeichert unter {save_path}")
@@ -107,7 +131,7 @@ def train_model(model, dataloader, criterion, optimizer, device, save_path, epoc
 def process_video_with_model(video_path, model, device, output_path, adjustment_factor=1.0):
     """
     Verarbeitet ein Video mit einem trainierten Modell und steuert die Stärke der Anpassungen.
-    
+
     :param video_path: Pfad zum Eingabevideo
     :param model: Das trainierte Modell
     :param device: CPU oder GPU
@@ -116,7 +140,7 @@ def process_video_with_model(video_path, model, device, output_path, adjustment_
     """
     cap = cv2.VideoCapture(video_path)
     frames = []
-    
+
     success, frame = cap.read()
     while success:
         frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -145,7 +169,6 @@ def process_video_with_model(video_path, model, device, output_path, adjustment_
         out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     out.release()
     print(f"Video gespeichert unter {output_path}")
-
 
 # -----------------------------
 # Hauptprogramm
@@ -182,10 +205,19 @@ def main():
     criterion = nn.MSELoss()
 
     # Training
-    train_model(model, dataloader, criterion, optimizer, device, model_path, epochs=20)
+    train_model(model, dataloader, criterion, optimizer, device, model_path, epochs=10)
 
     # Test
     process_video_with_model(video_path, model, device, output_video_path)
+
+    # Verarbeitung mit geringerer Anpassungsstärke (50%)
+    process_video_with_model("test_video.mp4", model, device, "output_low_adjustment.mp4", adjustment_factor=0.0)
+
+    # Verarbeitung mit geringerer Anpassungsstärke (50%)
+    process_video_with_model("test_video.mp4", model, device, "output_low_adjustment.mp4", adjustment_factor=0.5)
+
+    # Verarbeitung mit verstärkter Anpassungsstärke (200%)
+    process_video_with_model("test_video.mp4", model, device, "output_high_adjustment.mp4", adjustment_factor=2.0)
 
 if __name__ == "__main__":
     main()
