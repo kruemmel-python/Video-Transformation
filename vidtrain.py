@@ -7,6 +7,12 @@ import cv2
 from tqdm import tqdm
 import os
 from skimage.metrics import structural_similarity as ssim
+import torchvision.transforms as transforms
+from torchvision.models import vgg19
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import argparse
+import torchmetrics
 
 # -----------------------------
 # Dataset-Klasse
@@ -96,9 +102,7 @@ def calculate_accuracy(output, target):
         accuracy += ssim(output_np[i], target_np[i], win_size=3, multichannel=True, channel_axis=-1, data_range=1.0)
     return accuracy / batch_size
 
-
-
-def train_model(model, dataloader, criterion, optimizer, device, save_path, epochs=10):
+def train_model(model, dataloader, criterion, optimizer, device, save_path, epochs=5):
     model.train()
     for epoch in range(epochs):
         epoch_loss = 0
@@ -186,8 +190,10 @@ def main():
         # Beispiel: Transformationen (Helligkeit erhöhen)
         return np.clip(frame * 1.2, 0, 255)  # Erhöhe Helligkeit
 
-    if not os.path.exists(data_path):
-        generate_training_data(video_path, transform_function, data_path)
+    # Neugenerierung der Trainingsdaten
+    if os.path.exists(data_path):
+        os.remove(data_path)
+    generate_training_data(video_path, transform_function, data_path)
 
     inputs, targets = load_training_data(data_path)
     dataset = VideoFrameDataset(inputs, targets)
@@ -196,7 +202,7 @@ def main():
     # Modell initialisieren
     model = VideoFrameTransformer().to(device)
     if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         print("Vortrainiertes Modell geladen.")
     else:
         print("Kein Modell gefunden. Neues Modell wird erstellt.")
