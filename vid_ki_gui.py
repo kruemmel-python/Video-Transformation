@@ -1,140 +1,195 @@
+import customtkinter as ctk
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 import torch
-import cv2
-import numpy as np
-from tqdm import tqdm
 import os
+import subprocess
+from train_video import VideoFrameTransformer, process_video_with_model
 
-# -----------------------------
-# Neuronales Netzwerk
-# -----------------------------
-class VideoFrameTransformer(torch.nn.Module):
+class App(ctk.CTk):
     def __init__(self):
-        super(VideoFrameTransformer, self).__init__()
-        self.encoder = torch.nn.Sequential(
-            torch.nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            torch.nn.ReLU(),
-            torch.nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            torch.nn.ReLU(),
-            torch.nn.MaxPool2d(2)
+        super().__init__()
+        self.title("Video Frame Transformer GUI")
+        self.geometry("800x600")
+
+        ctk.set_appearance_mode("System")
+        ctk.set_default_color_theme("blue")
+
+        self.model = None
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model_path = "frame_transformer.pth"
+
+        self.input_video_path = ""
+        self.output_video_path = ""
+
+        # Variablen für Helligkeit, Kontrast, Schärfe und Farben
+        self.brightness_var = tk.DoubleVar(value=0.0)  # Werte: -1.0 bis 1.0
+        self.contrast_var = tk.DoubleVar(value=1.0)    # Werte: 0.5 bis 2.0
+        self.sharpness_var = tk.DoubleVar(value=0.0)  # Werte: 0.0 bis 1.0
+
+        self.color_factors = {
+            "rot": tk.DoubleVar(value=0.0),     # Werte: -1.0 bis 1.0
+            "grün": tk.DoubleVar(value=0.0),   # Werte: -1.0 bis 1.0
+            "blau": tk.DoubleVar(value=0.0),   # Werte: -1.0 bis 1.0
+            "gelb": tk.DoubleVar(value=0.0),   # Werte: -1.0 bis 1.0
+            "cyan": tk.DoubleVar(value=0.0),   # Werte: -1.0 bis 1.0
+            "magenta": tk.DoubleVar(value=0.0) # Werte: -1.0 bis 1.0
+        }
+
+        self.create_widgets()
+        self.load_model()
+
+    def create_widgets(self):
+        # Videoauswahl
+        frame_video = ctk.CTkFrame(self)
+        frame_video.pack(padx=10, pady=10, fill="x")
+
+        btn_select_video = ctk.CTkButton(frame_video, text="Eingabevideo auswählen", command=self.select_input_video)
+        btn_select_video.pack(side="left", padx=10, pady=10)
+
+        btn_select_output = ctk.CTkButton(frame_video, text="Zielvideo wählen", command=self.select_output_video)
+        btn_select_output.pack(side="left", padx=10, pady=10)
+
+        # Helligkeit, Kontrast und Schärfe
+        frame_adjustments = ctk.CTkFrame(self)
+        frame_adjustments.pack(padx=10, pady=10, fill="x")
+
+        lbl_brightness = ctk.CTkLabel(frame_adjustments, text="Helligkeit:")
+        lbl_brightness.pack()
+        sld_brightness = ctk.CTkSlider(frame_adjustments, from_=-1, to=1, variable=self.brightness_var, command=self.update_brightness_label)
+        sld_brightness.pack(fill="x", padx=5)
+        self.brightness_label = ctk.CTkLabel(frame_adjustments, text=f"{self.brightness_var.get():.2f}")
+        self.brightness_label.pack()
+
+        lbl_contrast = ctk.CTkLabel(frame_adjustments, text="Kontrast:")
+        lbl_contrast.pack()
+        sld_contrast = ctk.CTkSlider(frame_adjustments, from_=0.5, to=2, variable=self.contrast_var, command=self.update_contrast_label)
+        sld_contrast.pack(fill="x", padx=5)
+        self.contrast_label = ctk.CTkLabel(frame_adjustments, text=f"{self.contrast_var.get():.2f}")
+        self.contrast_label.pack()
+
+        lbl_sharpness = ctk.CTkLabel(frame_adjustments, text="Schärfe:")
+        lbl_sharpness.pack()
+        sld_sharpness = ctk.CTkSlider(frame_adjustments, from_=0, to=1, variable=self.sharpness_var, command=self.update_sharpness_label)
+        sld_sharpness.pack(fill="x", padx=5)
+        self.sharpness_label = ctk.CTkLabel(frame_adjustments, text=f"{self.sharpness_var.get():.2f}")
+        self.sharpness_label.pack()
+
+        # Farbsteuerung
+        frame_colors = ctk.CTkFrame(self)
+        frame_colors.pack(padx=10, pady=10, fill="both", expand=True)
+
+        self.color_labels = {}
+        for color_name, var in self.color_factors.items():
+            lbl = ctk.CTkLabel(frame_colors, text=f"{color_name.capitalize()}:")
+            lbl.pack()
+            sld = ctk.CTkSlider(frame_colors, from_=-1, to=1, variable=var, command=lambda value, name=color_name: self.update_color_label(name))
+            sld.pack(fill="x", padx=5)
+            color_label = ctk.CTkLabel(frame_colors, text=f"{var.get():.2f}")
+            color_label.pack()
+            self.color_labels[color_name] = color_label
+
+        # Verarbeiten-Button
+        frame_start = ctk.CTkFrame(self)
+        frame_start.pack(padx=10, pady=10, fill="x")
+
+        btn_process = ctk.CTkButton(frame_start, text="Video verarbeiten", command=self.on_process_video)
+        btn_process.pack(padx=5, pady=5)
+
+    def update_brightness_label(self, value):
+        self.brightness_label.configure(text=f"{self.brightness_var.get():.2f}")
+
+    def update_contrast_label(self, value):
+        self.contrast_label.configure(text=f"{self.contrast_var.get():.2f}")
+
+    def update_sharpness_label(self, value):
+        self.sharpness_label.configure(text=f"{self.sharpness_var.get():.2f}")
+
+    def update_color_label(self, color_name):
+        var = self.color_factors[color_name]
+        self.color_labels[color_name].configure(text=f"{var.get():.2f}")
+
+    def select_input_video(self):
+        path = filedialog.askopenfilename(filetypes=[("Video-Dateien", "*.mp4 *.avi *.mov *.mkv"), ("Alle Dateien", "*.*")])
+        if path:
+            self.input_video_path = path
+            print(f"Eingabevideo: {path}")
+
+    def select_output_video(self):
+        path = filedialog.asksaveasfilename(defaultextension=".mp4", filetypes=[("MP4-Datei", "*.mp4"), ("Alle Dateien", "*.*")])
+        if path:
+            self.output_video_path = path
+            print(f"Zielvideo: {path}")
+
+    def load_model(self):
+        if not os.path.exists(self.model_path):
+            print(f"Kein Modell unter '{self.model_path}' gefunden. Bitte trainiertes Modell bereitstellen.")
+            return
+
+        self.model = VideoFrameTransformer().to(self.device)
+        self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
+        print("Modell erfolgreich geladen.")
+
+    def on_process_video(self):
+        if not self.input_video_path:
+            print("Kein Eingabevideo ausgewählt!")
+            return
+        if not self.output_video_path:
+            print("Kein Zielvideo-Pfad angegeben!")
+            return
+        if not self.model:
+            print("Kein Modell geladen!")
+            return
+
+        # Farb- und Anpassungswerte sammeln
+        color_adjust = {k: v.get() for k, v in self.color_factors.items()}
+        brightness = self.brightness_var.get()
+        contrast = self.contrast_var.get()
+        sharpness = self.sharpness_var.get()
+
+        print("--- Verarbeitungsparameter ---")
+        print(f"Eingabevideo: {self.input_video_path}")
+        print(f"Zielvideo: {self.output_video_path}")
+        print(f"Helligkeit: {brightness:.2f}")
+        print(f"Kontrast: {contrast:.2f}")
+        print(f"Schärfe: {sharpness:.2f}")
+        print(f"Farbfaktoren: {color_adjust}")
+        print("--------------------------------")
+
+        temp_output_path = "temp_output.mp4"
+        process_video_with_model(
+            video_path=self.input_video_path,
+            model=self.model,
+            device=self.device,
+            output_path=temp_output_path,
+            adjustment_factor=1.0,  # Dies könnte angepasst werden
+            brightness_factor=brightness,
+            contrast_factor=contrast,
+            sharpness_factor=sharpness,
+            color_adjustments=color_adjust
         )
-        self.decoder = torch.nn.Sequential(
-            torch.nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2),
-            torch.nn.ReLU(),
-            torch.nn.Conv2d(64, 3, kernel_size=3, padding=1),
-            torch.nn.Sigmoid()
-        )
 
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.decoder(x)
-        return x
+        # Ton extrahieren und in das neue Video integrieren
+        self.integrate_audio(temp_output_path, self.input_video_path, self.output_video_path)
 
-# -----------------------------
-# Funktionen
-# -----------------------------
-def process_video_with_model(video_path, model, device, output_path, adjustment_factor=1.0, resolution=(1920, 1080)):
-    cap = cv2.VideoCapture(video_path)
-    frames = []
+        print("Videoverarbeitung abgeschlossen.")
 
-    success, frame = cap.read()
-    while success:
-        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        success, frame = cap.read()
-    cap.release()
+    def integrate_audio(self, temp_output_path, input_video_path, output_video_path):
+        # Ton aus dem Eingabevideo extrahieren
+        audio_path = "temp_audio.aac"
+        subprocess.run([
+            "ffmpeg", "-i", input_video_path, "-q:a", "0", "-map", "a", audio_path
+        ], check=True)
 
-    frames = torch.tensor(np.array(frames) / 255.0, dtype=torch.float32).permute(0, 3, 1, 2).to(device)
-    model.eval()
+        # Ton in das neue Video integrieren
+        subprocess.run([
+            "ffmpeg", "-i", temp_output_path, "-i", audio_path, "-c", "copy", "-map", "0:v", "-map", "1:a", output_video_path
+        ], check=True)
 
-    processed_frames = []
-    with torch.no_grad():
-        for frame in tqdm(frames, desc="Frames verarbeiten"):
-            output = model(frame.unsqueeze(0))
-            adjusted_output = frame + (output - frame) * adjustment_factor
-            adjusted_output = torch.clamp(adjusted_output, 0, 1)
-            processed_frames.append(adjusted_output.squeeze(0).cpu().numpy())
-
-    processed_frames = (np.array(processed_frames) * 255).astype(np.uint8).transpose(0, 2, 3, 1)
-
-    height, width = resolution
-    fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
-    for frame in processed_frames:
-        resized_frame = cv2.resize(frame, (width, height))
-        out.write(cv2.cvtColor(resized_frame, cv2.COLOR_RGB2BGR))
-    out.release()
-    messagebox.showinfo("Erfolg", f"Video gespeichert unter {output_path}")
-
-# -----------------------------
-# GUI
-# -----------------------------
-def start_gui():
-    def load_model():
-        global model
-        model_path = filedialog.askopenfilename(filetypes=[("Model Files", "*.pth")])
-        if not model_path:
-            return
-        try:
-            model.load_state_dict(torch.load(model_path, map_location=device))
-            model.eval()
-            messagebox.showinfo("Erfolg", "Modell erfolgreich geladen!")
-        except Exception as e:
-            messagebox.showerror("Fehler", f"Fehler beim Laden des Modells: {e}")
-
-    def select_input_video():
-        video_path = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4;*.avi;*.mov;*.mkv")])
-        if video_path:
-            input_video_var.set(video_path)
-
-    def generate_output_video():
-        video_path = input_video_var.get()
-        if not os.path.exists(video_path):
-            messagebox.showerror("Fehler", "Bitte wählen Sie ein gültiges Eingabevideo aus.")
-            return
-
-        output_path = filedialog.asksaveasfilename(defaultextension=".mp4", filetypes=[("MP4 Video", "*.mp4")])
-        if not output_path:
-            return
-
-        try:
-            adjustment_factor = float(adjustment_factor_var.get())
-            resolution = resolution_var.get()
-            resolution_map = {
-                "HD": (1280, 720),
-                "Full HD": (1920, 1080),
-                "2K": (1080, 2048),
-                "4K": (2160, 3840)
-            }
-            process_video_with_model(video_path, model, device, output_path, adjustment_factor, resolution_map[resolution])
-        except Exception as e:
-            messagebox.showerror("Fehler", f"Fehler bei der Videoverarbeitung: {e}")
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    global model
-    model = VideoFrameTransformer().to(device)
-
-    root = tk.Tk()
-    root.title("Video Transformation GUI")
-    root.geometry("400x400")
-
-    tk.Label(root, text="Eingabevideo").pack(pady=5)
-    input_video_var = tk.StringVar()
-    tk.Entry(root, textvariable=input_video_var, width=40).pack(pady=5)
-    tk.Button(root, text="Video auswählen", command=select_input_video).pack(pady=5)
-
-    tk.Label(root, text="Anpassungsfaktor (z. B. 1.0)").pack(pady=5)
-    adjustment_factor_var = tk.StringVar(value="1.0")
-    tk.Entry(root, textvariable=adjustment_factor_var, width=10).pack(pady=5)
-
-    tk.Label(root, text="Auflösung auswählen").pack(pady=5)
-    resolution_var = tk.StringVar(value="Full HD")
-    tk.OptionMenu(root, resolution_var, "HD", "Full HD", "2K", "4K").pack(pady=5)
-
-    tk.Button(root, text="Modell laden", command=load_model).pack(pady=5)
-    tk.Button(root, text="Video erstellen", command=generate_output_video).pack(pady=5)
-
-    root.mainloop()
+        # Temporäre Dateien löschen
+        os.remove(temp_output_path)
+        os.remove(audio_path)
 
 if __name__ == "__main__":
-    start_gui()
+    app = App()
+    app.mainloop()
