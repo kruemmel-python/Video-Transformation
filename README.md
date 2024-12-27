@@ -6,6 +6,16 @@ Dieses Projekt bietet ein neuronales Netzwerk, das Videos transformiert, indem e
 - **Trainierbares Neuronales Netzwerk**: Transformiert Video-Frames basierend auf Zielwerten.
 - **Flexible Auflösungen**: Unterstützung für HD, Full HD, 2K und 4K-Ausgaben.
 - **GUI-Unterstützung**: Einfache Bedienung über eine grafische Benutzeroberfläche (GUI).
+
+![image](https://github.com/user-attachments/assets/292737a0-3d55-4438-89fb-5526668ae929)
+
+![image](https://github.com/user-attachments/assets/20195738-9eaf-4ff6-9375-4ff66bc8dc8a)
+
+![image](https://github.com/user-attachments/assets/adbb37fb-c2a4-4224-a2b0-40299718dad2)
+
+
+
+  
 - **Qualitätsanalyse**: Berechnung von PSNR, SSIM, Helligkeit und Rauschintensität für die Videoanalyse.
 
 ## Voraussetzungen
