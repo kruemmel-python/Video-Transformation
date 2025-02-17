@@ -10,7 +10,16 @@ from PIL import Image, ImageTk
 from train_video import VideoFrameTransformer, process_video_with_model
 
 class App(ctk.CTk):
+    """
+    Hauptanwendungsklasse für die Video Frame Transformer GUI.
+
+    Diese Klasse erstellt die GUI, lädt das Modell, ermöglicht die Auswahl von Video- und Ausgabepfaden,
+    bietet Steuerelemente zur Anpassung von Helligkeit, Kontrast, Schärfe und Farbe und verarbeitet das Video.
+    """
     def __init__(self):
+        """
+        Initialisiert die App.
+        """
         super().__init__()
         self.title("Video Frame Transformer GUI")
         self.geometry("550x800")  # Hier können Sie die Größe der GUI festlegen
@@ -43,6 +52,9 @@ class App(ctk.CTk):
         self.load_model()
 
     def create_widgets(self):
+        """
+        Erstellt die GUI-Elemente.
+        """
         # Videoauswahl
         frame_video = ctk.CTkFrame(self)
         frame_video.pack(padx=10, pady=10, fill="x")
@@ -119,12 +131,30 @@ class App(ctk.CTk):
         self.preview_canvas.pack(padx=10, pady=10)
 
     def on_frame_configure(self, event):
+        """
+        Konfiguriert den Scrollbereich des Canvas, wenn sich die Größe des Frames ändert.
+
+        Args:
+            event: Das Konfigurationsereignis.
+        """
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def on_mouse_wheel(self, event):
+        """
+        Ermöglicht das Scrollen des Canvas mit dem Mausrad.
+
+        Args:
+            event: Das Mausradereignis.
+        """
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
     def update_preview(self, value=None):
+        """
+        Aktualisiert die Vorschau des Videos mit den aktuellen Anpassungswerten.
+
+        Args:
+            value: Der Wert des Schiebereglers (optional).
+        """
         if not self.input_video_path:
             return
 
@@ -153,6 +183,19 @@ class App(ctk.CTk):
         self.preview_canvas.image = imgtk
 
     def apply_adjustments(self, frame, brightness, contrast, sharpness, color_adjust):
+        """
+        Wendet Helligkeits-, Kontrast-, Schärfe- und Farbanpassungen auf einen Frame an.
+
+        Args:
+            frame: Der Eingabe-Frame (BGR).
+            brightness: Der Helligkeitsfaktor (-1.0 bis 1.0).
+            contrast: Der Kontrastfaktor (0.5 bis 2.0).
+            sharpness: Der Schärfefaktor (0.0 bis 1.0).
+            color_adjust: Ein Wörterbuch mit Farbanpassungsfaktoren (Farbe: Faktor).
+
+        Returns:
+            Der angepasste Frame.
+        """
         # Helligkeit anpassen
         frame = cv2.convertScaleAbs(frame, alpha=1, beta=brightness * 100)
 
@@ -187,6 +230,9 @@ class App(ctk.CTk):
         return frame
 
     def select_input_video(self):
+        """
+        Öffnet einen Dateidialog zur Auswahl eines Eingabevideos.
+        """
         path = filedialog.askopenfilename(filetypes=[("Video-Dateien", "*.mp4 *.avi *.mov *.mkv"), ("Alle Dateien", "*.*")])
         if path:
             self.input_video_path = path
@@ -194,12 +240,18 @@ class App(ctk.CTk):
             self.update_preview()
 
     def select_output_video(self):
+        """
+        Öffnet einen Dateidialog zum Speichern des Ausgabevideos.
+        """
         path = filedialog.asksaveasfilename(defaultextension=".mp4", filetypes=[("MP4-Datei", "*.mp4"), ("Alle Dateien", "*.*")])
         if path:
             self.output_video_path = path
             print(f"Zielvideo: {path}")
 
     def load_model(self):
+        """
+        Lädt das vortrainierte Modell.
+        """
         if not os.path.exists(self.model_path):
             print(f"Kein Modell unter '{self.model_path}' gefunden. Bitte trainiertes Modell bereitstellen.")
             return
@@ -209,6 +261,9 @@ class App(ctk.CTk):
         print("Modell erfolgreich geladen.")
 
     def on_process_video(self):
+        """
+        Verarbeitet das Video mit dem geladenen Modell und den ausgewählten Anpassungen.
+        """
         if not self.input_video_path:
             print("Kein Eingabevideo ausgewählt!")
             return
@@ -253,6 +308,14 @@ class App(ctk.CTk):
         print("Videoverarbeitung abgeschlossen.")
 
     def integrate_audio(self, temp_output_path, input_video_path, output_video_path):
+        """
+        Integriert den Ton aus dem Eingabevideo in das verarbeitete Video.
+
+        Args:
+            temp_output_path: Der Pfad zum temporären Ausgabevideo (ohne Ton).
+            input_video_path: Der Pfad zum Eingabevideo (mit Ton).
+            output_video_path: Der Pfad zum endgültigen Ausgabevideo (mit Ton).
+        """
         # Ton aus dem Eingabevideo extrahieren
         audio_path = "temp_audio.aac"
         subprocess.run([
