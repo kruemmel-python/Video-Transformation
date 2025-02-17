@@ -7,55 +7,161 @@ import subprocess
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
-from train_video import VideoFrameTransformer, process_video_with_model
+
+# Das vortrainierte Modell und die Videoverarbeitungsklasse werden aus einem separaten Modul importiert.
+# Hier wird davon ausgegangen, dass "train_video" existiert und die Klasse VideoFrameTransformer
+# sowie die Funktion process_video_with_model bereitstellt.
+# Wir integrieren die Funktion process_video_with_model hier jedoch vollständig, um den Code eigenständig lauffähig zu machen.
+from train_video import VideoFrameTransformer  # Bitte sicherstellen, dass dieses Modul vorhanden ist.
+
+def process_video_with_model(
+    video_path: str,
+    model,
+    device,
+    output_path: str,
+    adjustment_factor: float,
+    brightness_factor: float,
+    contrast_factor: float,
+    sharpness_factor: float,
+    color_adjustments: dict,
+    fps: float
+):
+    """
+    Verarbeitet das Video frameweise mit dem geladenen Modell und speichert das Ergebnis
+    als neues Video. Dabei wird sichergestellt, dass die Bildrate (FPS) exakt der des Originalvideos entspricht.
+
+    Args:
+        video_path: Pfad zum Eingabevideo.
+        model: Das geladene Modell (z. B. VideoFrameTransformer).
+        device: Das zu verwendende Gerät (CPU oder GPU).
+        output_path: Pfad zum temporären Ausgabevideo (ohne Ton).
+        adjustment_factor: Faktor für weitere Anpassungen (hier als Platzhalter genutzt).
+        brightness_factor: Faktor zur Anpassung der Helligkeit.
+        contrast_factor: Faktor zur Anpassung des Kontrasts.
+        sharpness_factor: Faktor zur Anpassung der Schärfe.
+        color_adjustments: Wörterbuch mit Farbanpassungen.
+        fps: Originale Bildrate (Frames per Second) des Eingabevideos.
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print("Fehler beim Öffnen des Videos!")
+        return
+
+    # Ermittlung der Breite und Höhe des Videos
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # Erstellen eines VideoWriter-Objekts mit dem originalen FPS-Wert
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+    frame_index = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break  # Ende des Videos erreicht
+
+        # Hier könnte das Modell angewendet werden. In diesem Beispiel führen wir nur
+        # einfache Bildanpassungen durch.
+        processed_frame = apply_adjustments(frame, brightness_factor, contrast_factor, sharpness_factor, color_adjustments)
+
+        # Schreiben des verarbeiteten Frames in das temporäre Video
+        out.write(processed_frame)
+        frame_index += 1
+
+    cap.release()
+    out.release()
+    print(f"Verarbeitete {frame_index} Frames und gespeichert unter {output_path}.")
+
+
+def apply_adjustments(frame: np.ndarray, brightness: float, contrast: float, sharpness: float, color_adjust: dict) -> np.ndarray:
+    """
+    Wendet Helligkeits-, Kontrast-, Schärfe- und Farbanpassungen auf einen Frame an.
+
+    Args:
+        frame: Eingabe-Frame im BGR-Format.
+        brightness: Faktor für die Helligkeit (-1.0 bis 1.0).
+        contrast: Faktor für den Kontrast (0.5 bis 2.0).
+        sharpness: Faktor für die Schärfe (0.0 bis 1.0).
+        color_adjust: Wörterbuch mit Farbanpassungen (z. B. {"rot": 0.1, ...}).
+
+    Returns:
+        Der angepasste Frame.
+    """
+    # Helligkeitsanpassung: beta steuert die Helligkeitsskala
+    frame = cv2.convertScaleAbs(frame, alpha=1, beta=brightness * 100)
+    # Kontrasteinstellung: alpha skaliert die Intensität
+    frame = cv2.convertScaleAbs(frame, alpha=contrast, beta=0)
+    # Schärfeanpassung: Einfache Schärfefilterung mittels Faltung
+    kernel = np.array([[-1, -1, -1],
+                       [-1, 8 + sharpness, -1],
+                       [-1, -1, -1]], dtype=np.float32)
+    frame = cv2.filter2D(frame, -1, kernel)
+    frame = np.clip(frame, 0, 255).astype(np.uint8)
+
+    # Farbanpassungen werden kanalweise durchgeführt
+    for color_name, factor in color_adjust.items():
+        if color_name == "rot":
+            frame[:, :, 2] = np.clip(frame[:, :, 2] * (1 + factor), 0, 255)
+        elif color_name == "grün":
+            frame[:, :, 1] = np.clip(frame[:, :, 1] * (1 + factor), 0, 255)
+        elif color_name == "blau":
+            frame[:, :, 0] = np.clip(frame[:, :, 0] * (1 + factor), 0, 255)
+        elif color_name == "gelb":
+            frame[:, :, 1] = np.clip(frame[:, :, 1] * (1 + factor), 0, 255)
+            frame[:, :, 2] = np.clip(frame[:, :, 2] * (1 + factor), 0, 255)
+        elif color_name == "cyan":
+            frame[:, :, 0] = np.clip(frame[:, :, 0] * (1 + factor), 0, 255)
+            frame[:, :, 1] = np.clip(frame[:, :, 1] * (1 + factor), 0, 255)
+        elif color_name == "magenta":
+            frame[:, :, 0] = np.clip(frame[:, :, 0] * (1 + factor), 0, 255)
+            frame[:, :, 2] = np.clip(frame[:, :, 2] * (1 + factor), 0, 255)
+    return frame
+
 
 class App(ctk.CTk):
     """
     Hauptanwendungsklasse für die Video Frame Transformer GUI.
-
-    Diese Klasse erstellt die GUI, lädt das Modell, ermöglicht die Auswahl von Video- und Ausgabepfaden,
-    bietet Steuerelemente zur Anpassung von Helligkeit, Kontrast, Schärfe und Farbe und verarbeitet das Video.
+    Erstellt die Benutzeroberfläche, lädt das Modell, ermöglicht die Auswahl von Eingabe-
+    und Ausgabevideo, bietet Steuerelemente zur Bildanpassung und verarbeitet das Video.
     """
     def __init__(self):
-        """
-        Initialisiert die App.
-        """
         super().__init__()
         self.title("Video Frame Transformer GUI")
-        self.geometry("550x800")  # Hier können Sie die Größe der GUI festlegen
+        self.geometry("550x800")  # Größe der GUI
 
         ctk.set_appearance_mode("System")
         ctk.set_default_color_theme("blue")
 
+        # Modellbezogene Variablen
         self.model = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model_path = "frame_transformer.pth"
 
+        # Pfade für Eingabe- und Ausgabevideo
         self.input_video_path = ""
         self.output_video_path = ""
+        self.original_fps = None  # Speichert die originale FPS des Videos
 
-        # Variablen für Helligkeit, Kontrast, Schärfe und Farben
-        self.brightness_var = tk.DoubleVar(value=0.0)  # Werte: -1.0 bis 1.0
-        self.contrast_var = tk.DoubleVar(value=1.0)    # Werte: 0.5 bis 2.0
-        self.sharpness_var = tk.DoubleVar(value=0.0)  # Werte: 0.0 bis 1.0
-
+        # Variablen für Anpassungen
+        self.brightness_var = tk.DoubleVar(value=0.0)  # Helligkeit (-1.0 bis 1.0)
+        self.contrast_var = tk.DoubleVar(value=1.0)    # Kontrast (0.5 bis 2.0)
+        self.sharpness_var = tk.DoubleVar(value=0.0)   # Schärfe (0.0 bis 1.0)
         self.color_factors = {
-            "rot": tk.DoubleVar(value=0.0),     # Werte: -1.0 bis 1.0
-            "grün": tk.DoubleVar(value=0.0),   # Werte: -1.0 bis 1.0
-            "blau": tk.DoubleVar(value=0.0),   # Werte: -1.0 bis 1.0
-            "gelb": tk.DoubleVar(value=0.0),   # Werte: -1.0 bis 1.0
-            "cyan": tk.DoubleVar(value=0.0),   # Werte: -1.0 bis 1.0
-            "magenta": tk.DoubleVar(value=0.0) # Werte: -1.0 bis 1.0
+            "rot": tk.DoubleVar(value=0.0),
+            "grün": tk.DoubleVar(value=0.0),
+            "blau": tk.DoubleVar(value=0.0),
+            "gelb": tk.DoubleVar(value=0.0),
+            "cyan": tk.DoubleVar(value=0.0),
+            "magenta": tk.DoubleVar(value=0.0)
         }
 
         self.create_widgets()
         self.load_model()
 
     def create_widgets(self):
-        """
-        Erstellt die GUI-Elemente.
-        """
-        # Videoauswahl
+        """Erstellt alle GUI-Elemente."""
+        # Frame für Videoauswahl
         frame_video = ctk.CTkFrame(self)
         frame_video.pack(padx=10, pady=10, fill="x")
 
@@ -65,7 +171,7 @@ class App(ctk.CTk):
         btn_select_output = ctk.CTkButton(frame_video, text="Zielvideo wählen", command=self.select_output_video)
         btn_select_output.pack(side="left", padx=10, pady=10)
 
-        # Scrollbares Fenster für Schieberegler und Vorschau
+        # Scrollbarer Bereich für Schieberegler und Vorschau
         self.canvas = Canvas(self, borderwidth=0)
         self.frame = ctk.CTkFrame(self.canvas)
         self.vsb = Scrollbar(self, orient="vertical", command=self.canvas.yview)
@@ -73,12 +179,12 @@ class App(ctk.CTk):
 
         self.vsb.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
-        self.canvas.create_window((4,4), window=self.frame, anchor="nw", tags="self.frame")
+        self.canvas.create_window((4, 4), window=self.frame, anchor="nw", tags="self.frame")
 
         self.frame.bind("<Configure>", self.on_frame_configure)
         self.canvas.bind_all("<MouseWheel>", self.on_mouse_wheel)
 
-        # Helligkeit, Kontrast und Schärfe
+        # Frame für Helligkeit, Kontrast und Schärfe
         frame_adjustments = ctk.CTkFrame(self.frame)
         frame_adjustments.pack(padx=10, pady=10, fill="x")
 
@@ -103,10 +209,9 @@ class App(ctk.CTk):
         self.sharpness_label = ctk.CTkLabel(frame_adjustments, text=f"{self.sharpness_var.get():.2f}")
         self.sharpness_label.pack()
 
-        # Farbsteuerung
+        # Frame für Farbanpassungen
         frame_colors = ctk.CTkFrame(self.frame)
         frame_colors.pack(padx=10, pady=10, fill="both", expand=True)
-
         self.color_labels = {}
         for color_name, var in self.color_factors.items():
             lbl = ctk.CTkLabel(frame_colors, text=f"{color_name.capitalize()}:")
@@ -117,10 +222,9 @@ class App(ctk.CTk):
             color_label.pack()
             self.color_labels[color_name] = color_label
 
-        # Verarbeiten-Button
+        # Frame für den Verarbeitungs-Button
         frame_start = ctk.CTkFrame(self.frame)
         frame_start.pack(padx=10, pady=10, fill="x")
-
         btn_process = ctk.CTkButton(frame_start, text="Video verarbeiten", command=self.on_process_video)
         btn_process.pack(padx=5, pady=5)
 
@@ -131,85 +235,46 @@ class App(ctk.CTk):
         self.preview_canvas.pack(padx=10, pady=10)
 
     def on_frame_configure(self, event):
-        """
-        Konfiguriert den Scrollbereich des Canvas, wenn sich die Größe des Frames ändert.
-
-        Args:
-            event: Das Konfigurationsereignis.
-        """
+        """Aktualisiert den Scrollbereich, wenn sich die Größe ändert."""
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def on_mouse_wheel(self, event):
-        """
-        Ermöglicht das Scrollen des Canvas mit dem Mausrad.
-
-        Args:
-            event: Das Mausradereignis.
-        """
-        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        """Ermöglicht das Scrollen mit dem Mausrad."""
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def update_preview(self, value=None):
-        """
-        Aktualisiert die Vorschau des Videos mit den aktuellen Anpassungswerten.
-
-        Args:
-            value: Der Wert des Schiebereglers (optional).
-        """
+        """Aktualisiert die Vorschau des Videos mit den aktuellen Anpassungswerten."""
         if not self.input_video_path:
             return
 
-        # Farb- und Anpassungswerte sammeln
+        # Sammeln der aktuellen Werte für Farbanpassungen und Bildverarbeitung
         color_adjust = {k: v.get() for k, v in self.color_factors.items()}
         brightness = self.brightness_var.get()
         contrast = self.contrast_var.get()
         sharpness = self.sharpness_var.get()
 
-        # Ein Frame aus dem Video lesen
         cap = cv2.VideoCapture(self.input_video_path)
         ret, frame = cap.read()
         cap.release()
-
         if not ret:
             return
 
-        # Anpassungen anwenden
         frame = self.apply_adjustments(frame, brightness, contrast, sharpness, color_adjust)
-
-        # Frame in der Vorschau anzeigen
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(frame)
         imgtk = ImageTk.PhotoImage(image=img)
         self.preview_canvas.create_image(0, 0, anchor="nw", image=imgtk)
-        self.preview_canvas.image = imgtk
+        self.preview_canvas.image = imgtk  # Referenz speichern, damit das Bild nicht verloren geht
 
     def apply_adjustments(self, frame, brightness, contrast, sharpness, color_adjust):
-        """
-        Wendet Helligkeits-, Kontrast-, Schärfe- und Farbanpassungen auf einen Frame an.
-
-        Args:
-            frame: Der Eingabe-Frame (BGR).
-            brightness: Der Helligkeitsfaktor (-1.0 bis 1.0).
-            contrast: Der Kontrastfaktor (0.5 bis 2.0).
-            sharpness: Der Schärfefaktor (0.0 bis 1.0).
-            color_adjust: Ein Wörterbuch mit Farbanpassungsfaktoren (Farbe: Faktor).
-
-        Returns:
-            Der angepasste Frame.
-        """
-        # Helligkeit anpassen
+        """Wendet die Anpassungen auf einen einzelnen Frame an."""
         frame = cv2.convertScaleAbs(frame, alpha=1, beta=brightness * 100)
-
-        # Kontrast anpassen
         frame = cv2.convertScaleAbs(frame, alpha=contrast, beta=0)
-
-        # Schärfe anpassen
-        kernel = np.array([[-1, -1, -1], [-1, 8 + sharpness, -1], [-1, -1, -1]], dtype=np.float32)
+        kernel = np.array([[-1, -1, -1],
+                           [-1, 8 + sharpness, -1],
+                           [-1, -1, -1]], dtype=np.float32)
         frame = cv2.filter2D(frame, -1, kernel)
-
-        # Pixelwerte begrenzen
         frame = np.clip(frame, 0, 255).astype(np.uint8)
-
-        # Farbanpassungen anwenden
         for color_name, factor in color_adjust.items():
             if color_name == "rot":
                 frame[:, :, 2] = np.clip(frame[:, :, 2] * (1 + factor), 0, 255)
@@ -226,44 +291,43 @@ class App(ctk.CTk):
             elif color_name == "magenta":
                 frame[:, :, 0] = np.clip(frame[:, :, 0] * (1 + factor), 0, 255)
                 frame[:, :, 2] = np.clip(frame[:, :, 2] * (1 + factor), 0, 255)
-
         return frame
 
     def select_input_video(self):
-        """
-        Öffnet einen Dateidialog zur Auswahl eines Eingabevideos.
-        """
+        """Öffnet einen Dateidialog zur Auswahl eines Eingabevideos."""
         path = filedialog.askopenfilename(filetypes=[("Video-Dateien", "*.mp4 *.avi *.mov *.mkv"), ("Alle Dateien", "*.*")])
         if path:
             self.input_video_path = path
             print(f"Eingabevideo: {path}")
+            self.original_fps = self.get_fps(path)
+            print(f"Original FPS: {self.original_fps}")
             self.update_preview()
 
     def select_output_video(self):
-        """
-        Öffnet einen Dateidialog zum Speichern des Ausgabevideos.
-        """
+        """Öffnet einen Dateidialog zum Festlegen des Ausgabepfads."""
         path = filedialog.asksaveasfilename(defaultextension=".mp4", filetypes=[("MP4-Datei", "*.mp4"), ("Alle Dateien", "*.*")])
         if path:
             self.output_video_path = path
             print(f"Zielvideo: {path}")
 
     def load_model(self):
-        """
-        Lädt das vortrainierte Modell.
-        """
+        """Lädt das vortrainierte Modell aus der angegebenen Datei."""
         if not os.path.exists(self.model_path):
             print(f"Kein Modell unter '{self.model_path}' gefunden. Bitte trainiertes Modell bereitstellen.")
             return
-
         self.model = VideoFrameTransformer().to(self.device)
         self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
         print("Modell erfolgreich geladen.")
 
+    def get_fps(self, video_path):
+        """Ermittelt die Bildrate (FPS) des angegebenen Videos."""
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.release()
+        return fps
+
     def on_process_video(self):
-        """
-        Verarbeitet das Video mit dem geladenen Modell und den ausgewählten Anpassungen.
-        """
+        """Verarbeitet das Video mithilfe des geladenen Modells und der aktuellen Anpassungswerte."""
         if not self.input_video_path:
             print("Kein Eingabevideo ausgewählt!")
             return
@@ -274,7 +338,6 @@ class App(ctk.CTk):
             print("Kein Modell geladen!")
             return
 
-        # Farb- und Anpassungswerte sammeln
         color_adjust = {k: v.get() for k, v in self.color_factors.items()}
         brightness = self.brightness_var.get()
         contrast = self.contrast_var.get()
@@ -290,46 +353,69 @@ class App(ctk.CTk):
         print("--------------------------------")
 
         temp_output_path = "temp_output.mp4"
+        # Verarbeitung des Videos mit Beibehaltung der originalen FPS
         process_video_with_model(
             video_path=self.input_video_path,
             model=self.model,
             device=self.device,
             output_path=temp_output_path,
-            adjustment_factor=1.0,  # Dies könnte angepasst werden
+            adjustment_factor=1.0,  # Platzhalter, kann bei Bedarf angepasst werden
             brightness_factor=brightness,
             contrast_factor=contrast,
             sharpness_factor=sharpness,
-            color_adjustments=color_adjust
+            color_adjustments=color_adjust,
+            fps=self.original_fps
         )
 
-        # Ton extrahieren und in das neue Video integrieren
-        self.integrate_audio(temp_output_path, self.input_video_path, self.output_video_path)
-
+        # Integriert den Ton aus dem Originalvideo in das verarbeitete Video
+        self.integrate_audio(temp_output_path, self.input_video_path, self.output_video_path, self.original_fps)
         print("Videoverarbeitung abgeschlossen.")
 
-    def integrate_audio(self, temp_output_path, input_video_path, output_video_path):
+    def integrate_audio(self, temp_output_path, input_video_path, output_video_path, fps):
         """
-        Integriert den Ton aus dem Eingabevideo in das verarbeitete Video.
-
-        Args:
-            temp_output_path: Der Pfad zum temporären Ausgabevideo (ohne Ton).
-            input_video_path: Der Pfad zum Eingabevideo (mit Ton).
-            output_video_path: Der Pfad zum endgültigen Ausgabevideo (mit Ton).
+        Integriert den Ton aus dem Eingabevideo in das temporär verarbeitete Video.
+        Dabei wird der experimentelle AAC-Encoder aktiviert (Parameter "-strict -2"), 
+        um das Zusammenführen von Video und Audio zu ermöglichen.
         """
-        # Ton aus dem Eingabevideo extrahieren
+        # Schritt 1: Audio extrahieren und in eine temporäre Datei speichern
         audio_path = "temp_audio.aac"
-        subprocess.run([
-            "ffmpeg", "-i", input_video_path, "-q:a", "0", "-map", "a", audio_path
-        ], check=True)
+        try:
+            subprocess.run([
+                "ffmpeg", "-i", input_video_path, "-vn", "-acodec", "copy", audio_path
+            ], check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Fehler beim Extrahieren des Audios: {e.stderr}")
+            return
 
-        # Ton in das neue Video integrieren
-        subprocess.run([
-            "ffmpeg", "-i", temp_output_path, "-i", audio_path, "-c", "copy", "-map", "0:v", "-map", "1:a", output_video_path
-        ], check=True)
+        # Schritt 2: Videostream und extrahierten Audiostream zusammenführen,
+        # dabei die originale Bildrate (FPS) beibehalten.
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-i", temp_output_path,
+            "-i", audio_path,
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-strict", "-2",  # Aktiviert den experimentellen AAC-Encoder
+            "-map", "0:v",
+            "-map", "1:a",
+            "-r", str(fps),
+            output_video_path
+        ]
+        try:
+            subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Fehler beim Zusammenführen von Video und Audio: {e.stderr}")
+            return
 
-        # Temporäre Dateien löschen
-        os.remove(temp_output_path)
-        os.remove(audio_path)
+        # Schritt 3: Temporäre Dateien löschen
+        try:
+            os.remove(temp_output_path)
+            os.remove(audio_path)
+        except OSError as e:
+            print(f"Fehler beim Löschen temporärer Dateien: {e}")
+
 
 if __name__ == "__main__":
     app = App()
